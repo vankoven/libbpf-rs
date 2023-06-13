@@ -1,7 +1,10 @@
 use core::ffi::c_void;
 use std::convert::TryFrom;
 use std::ffi::CStr;
+use std::ffi::CString;
+use std::fmt::Debug;
 use std::mem;
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::io::AsFd;
 use std::os::unix::io::AsRawFd;
 use std::os::unix::io::BorrowedFd;
@@ -17,6 +20,7 @@ use strum_macros::Display;
 
 use crate::libbpf_sys;
 use crate::util;
+use crate::util::parse_ret_i32;
 use crate::Error;
 use crate::Link;
 use crate::Result;
@@ -445,6 +449,30 @@ impl Program {
         };
         util::parse_ret(ret)?;
         Ok(prog_info.id)
+    }
+
+    /// Returns program fd by pin
+    ///
+    /// # Panics
+    /// If the path contains null bytes.
+    pub fn get_fd_by_pin<P: AsRef<Path>>(path: P) -> Result<OwnedFd> {
+        fn inner(path: &Path) -> Result<OwnedFd> {
+            let p = CString::new(path.as_os_str().as_bytes()).expect("path contained null bytes");
+            let fd = parse_ret_i32(unsafe {
+                // SAFETY
+                // p is never null since we allocated ourselves.
+                libbpf_sys::bpf_obj_get(p.as_ptr())
+            })?;
+            let fd = unsafe {
+                // SAFETY
+                // A file descriptor coming from the bpf_obj_get function is always suitable for
+                // ownership and can be cleaned up with close.
+                OwnedFd::from_raw_fd(fd)
+            };
+            Ok(fd)
+        }
+
+        inner(path.as_ref())
     }
 
     /// Returns flags that have been set for the program.
